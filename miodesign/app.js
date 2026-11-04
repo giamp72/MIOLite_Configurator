@@ -116,10 +116,10 @@ async function uploadGlbResource(file, type, folder) {
       impronta_file: impronta,
     }).select('id_glb').single());
     resourceId = resource.id_glb;
-    if (meshes?.length) {
-      await q(sb.from('mesh_glb').insert(meshes.map((mesh) => ({ ...mesh, id_glb: resource.id_glb }))));
-    }
-    return { ...resource, meshes, path };
+    const savedMeshes = meshes?.length
+      ? await q(sb.from('mesh_glb').insert(meshes.map((mesh) => ({ ...mesh, id_glb: resource.id_glb }))).select('id_mesh, id_glb, nome_mesh, percorso_nodo, indice_mesh, materiale_base'))
+      : meshes;
+    return { ...resource, meshes: savedMeshes, path };
   } catch (error) {
     const cleanupErrors = [];
     if (resourceId) {
@@ -155,6 +155,7 @@ const icon = (name) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">
 const btn = (name, label) => `${icon(name)}<span>${label}</span>`;
 
 const go = (hash) => { location.hash = hash; };
+const withReturn = (hash, returnTo) => `${hash}${returnTo ? `?return=${encodeURIComponent(returnTo)}` : ''}`;
 
 const saveBar = (label = 'Salva tutto') => `<div class="save-bar"><span class="muted">Le modifiche vengono salvate solo con questo pulsante.</span><button class="primary" id="save-all" type="button">${btn('save', label)}</button></div>`;
 
@@ -309,7 +310,7 @@ async function viewProdotto(idParam) {
     }
   }
 
-  const misuraRow = (m) => `<tr data-misura="${m?.id_misura ?? 'new'}" data-glb="${m?.id_glb ?? ''}">
+  const misuraRow = (m) => `<tr data-misura="${m?.id_misura ?? 'new'}" data-preview-id="${m?.id_misura ?? `new-${crypto.randomUUID()}`}" data-glb="${m?.id_glb ?? ''}">
       <td class="col-dim"><input type="number" step="any" data-f="dim_x" value="${esc(m?.dim_x)}" aria-label="Larghezza"></td>
       <td class="col-dim"><input type="number" step="any" data-f="dim_y" value="${esc(m?.dim_y)}" aria-label="Altezza"></td>
       <td class="col-dim"><input type="number" step="any" data-f="dim_z" value="${esc(m?.dim_z)}" aria-label="Profondità"></td>
@@ -336,9 +337,10 @@ async function viewProdotto(idParam) {
   };
 
   const assegnabili = tuttiAttributi.filter((a) => a.attivo && !assegnati.some((x) => x.id_attributo === a.id_attributo));
-  const previewMeasures = misure.filter((measure) => measure.id_glb && measure.risorse_glb?.percorso_risorsa);
+  let previewMeasures = misure.filter((measure) => measure.id_glb && measure.risorse_glb?.percorso_risorsa)
+    .map((measure) => ({ ...measure, previewId: String(measure.id_misura) }));
   const meshesForMeasure = (measureId) => {
-    const measure = previewMeasures.find((item) => String(item.id_misura) === String(measureId));
+    const measure = previewMeasures.find((item) => String(item.previewId) === String(measureId));
     return measure ? meshRows.filter((mesh) => mesh.id_glb === measure.id_glb)
       .sort((a, b) => a.percorso_nodo.localeCompare(b.percorso_nodo)) : [];
   };
@@ -351,12 +353,11 @@ async function viewProdotto(idParam) {
       <td><button class="small ghost" type="button" data-highlight-mesh="${esc(mesh.percorso_nodo)}">Evidenzia</button></td></tr>`).join('')}
     </tbody></table></div>` : '<p class="empty">Nessuna mesh nel GLB di questa misura.</p>';
   const meshMappingSection = () => {
-    if (!previewMeasures.length) return '<p class="empty">Associa prima un GLB a una misura.</p>';
-    const selectedId = String(previewMeasures[0].id_misura);
-    const rows = meshesForMeasure(selectedId);
+    const selectedId = previewMeasures[0]?.previewId ?? '';
+    const rows = selectedId ? meshesForMeasure(selectedId) : [];
     return `<label for="mapping-measure">Misura / GLB</label>
-      <select id="mapping-measure">${previewMeasures.map((measure) => `<option value="${measure.id_misura}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)} · ${esc(measure.risorse_glb.nome_file)}</option>`).join('')}</select>
-      <div id="mesh-map-rows">${meshMappingRows(rows)}</div>`;
+      <select id="mapping-measure">${previewMeasures.map((measure) => `<option value="${measure.previewId}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)} · ${esc(measure.risorse_glb.nome_file)}</option>`).join('')}</select>
+      <div id="mesh-map-rows">${previewMeasures.length ? meshMappingRows(rows) : '<p class="empty">Associa prima un GLB a una misura.</p>'}</div>`;
   };
   const previewAttributesMarkup = (measureId) => {
     const attributeIds = mappedAttributeIds(measureId);
@@ -364,7 +365,10 @@ async function viewProdotto(idParam) {
     return attributeIds.map((attributeId) => {
       const attribute = assegnati.find((item) => item.id_attributo === attributeId);
       if (!attribute) return '';
-      const allowedIds = new Set(configs.filter((config) => config.id_attributo === attributeId).map((config) => config.id_opzione));
+      const block = $(`.attr-block[data-attr="${attributeId}"]`);
+      const allowedIds = new Set(block
+        ? $$('[data-opt]:checked', block).map((option) => Number(option.dataset.opt))
+        : configs.filter((config) => config.id_attributo === attributeId).map((config) => config.id_opzione));
       const options = (previewOptionsByAttr[attributeId] || []).filter((option) => allowedIds.has(option.id_opzione));
       return `<div class="field preview-attr-row"><label for="preview-attr-${attributeId}">${esc(attribute.attributi.nome)}${attribute.attributi.descrizione ? `: ${esc(attribute.attributi.descrizione)}` : ''}</label>
         <select id="preview-attr-${attributeId}" data-preview-attribute="${attributeId}">
@@ -372,17 +376,45 @@ async function viewProdotto(idParam) {
         </select></div>`;
     }).join('');
   };
+  const summaryMeasuresMarkup = () => {
+    const rows = $$('#misure tr').filter((row) => row.dataset.misura !== 'new' || row.querySelector('[data-f=dim_x]').value || row.dataset.glb);
+    return rows.length ? rows.map((row) => {
+      const dimension = ['dim_x', 'dim_y', 'dim_z'].map((name) => row.querySelector(`[data-f=${name}]`).value || '—').join(' × ');
+      const unit = row.querySelector('[data-f=unita_misura]').value;
+      const glbName = row.querySelector('[data-glb-name]').value || 'Nessun GLB';
+      return `<li><strong>${esc(dimension)} ${esc(unit)}</strong><span class="muted">${esc(glbName)}</span></li>`;
+    }).join('') : '<li class="muted">Aggiungi una misura e associa un GLB.</li>';
+  };
+  const summaryAttributesMarkup = () => assegnati.length
+    ? assegnati.map((attribute) => {
+      const block = $(`.attr-block[data-attr="${attribute.id_attributo}"]`);
+      const selected = block ? $$('[data-opt]:checked', block).length : 0;
+      return `<li><strong>${esc(attribute.attributi.nome)}</strong><span class="muted">${esc(attribute.attributi.tipo_attributo)} · ${selected} opzioni ammesse</span></li>`;
+    }).join('')
+    : '<li class="muted">Nessun attributo assegnato.</li>';
+  const refreshProductSummary = () => {
+    const measures = $('#product-summary-measures');
+    const attributes = $('#product-summary-attributes');
+    if (measures) measures.innerHTML = summaryMeasuresMarkup();
+    if (attributes) attributes.innerHTML = summaryAttributesMarkup();
+  };
 
   shell(`
     <div class="page-head"><div><h1>${isNew ? 'Nuovo prodotto' : esc(prodotto.nome)}</h1>
       <span class="muted">${isNew ? 'L\'ID progressivo verrà assegnato al salvataggio.' : `ID prodotto ${id}`}</span></div><a class="btn" href="#/prodotti">${btn('close', 'Chiudi')}</a></div>
+    ${isNew ? `<form class="card" id="form-prodotto">
+      <h2>Dati prodotto</h2>
+      <div class="field"><label for="nome">Nome *</label><input id="nome" required maxlength="200" value="${esc(prodotto.nome)}"></div>
+      <div class="field"><label for="descrizione">Descrizione</label><textarea id="descrizione">${esc(prodotto.descrizione)}</textarea></div>
+      <div class="field"><label class="check"><input type="checkbox" id="attivo" ${prodotto.attivo ? 'checked' : ''}> Attivo nel catalogo</label></div>
+    </form><p class="muted">Dopo la creazione potrai definire misure e attributi.</p>` : `
+    <div class="product-editor-layout"><div class="product-editor-fields">
     <form class="card" id="form-prodotto">
       <h2>Dati prodotto</h2>
       <div class="field"><label for="nome">Nome *</label><input id="nome" required maxlength="200" value="${esc(prodotto.nome)}"></div>
       <div class="field"><label for="descrizione">Descrizione</label><textarea id="descrizione">${esc(prodotto.descrizione)}</textarea></div>
       <div class="field"><label class="check"><input type="checkbox" id="attivo" ${prodotto.attivo ? 'checked' : ''}> Attivo nel catalogo</label></div>
     </form>
-    ${isNew ? '<p class="muted">Dopo la creazione potrai definire misure e attributi.</p>' : `
     <section class="card"><h2>Misure e GLB (terne larghezza / altezza / profondità)</h2>
       <p class="muted">Ogni terna può avere un GLB indipendente, con mesh e mappatura attributi proprie.</p>
       <div class="table-scroll"><table><thead><tr><th>Larghezza</th><th>Altezza</th><th>Profondità</th><th>Unità</th><th>GLB oggetto</th><th></th></tr></thead>
@@ -391,28 +423,30 @@ async function viewProdotto(idParam) {
     <section class="card"><h2>Attributi del prodotto</h2>
       <div id="attr-blocks">${assegnati.map(attrBlock).join('')}</div>
       <p class="muted" id="no-attr" ${assegnati.length ? 'hidden' : ''}>Nessun attributo assegnato.</p>
-      <div class="row"><div><label for="nuovo-attr">Aggiungi attributo</label><select id="nuovo-attr">
+      <div class="row"><div><label for="nuovo-attr">Aggiungi attributo esistente</label><select id="nuovo-attr">
         <option value="">— seleziona —</option>${assegnabili.map((a) => `<option value="${a.id_attributo}">${esc(attributeLabel(a))} (${esc(a.tipo_attributo)})</option>`).join('')}</select></div>
+        <div class="shrink"><a class="btn" href="${withReturn('#/attributi/nuovo', location.hash)}">${btn('plus', 'Definisci nuovo attributo')}</a></div>
         </div><p class="muted">Puoi aggiungerne quanti vuoi: tutto viene salvato con il pulsante in basso.</p></section>
-    <div class="mesh-layout">
     <section class="card"><h2>Mappatura mesh</h2>
       <p class="muted">Per ogni mesh puoi assegnare separatamente un attributo materiale e un attributo di visibilità. Ogni GLB ha la propria mappatura.</p>
       <p class="muted">Mesh selezionata: <code id="mapping-highlighted">nessuna</code></p>
-      ${meshMappingSection()}</section>
-    <section class="card preview-sticky"><h2>Prova configurazione</h2>
-      <p class="muted">Seleziona gli attributi e verifica in anteprima materiali e visibilità. Usa “Evidenzia” nella mappatura per individuare una mesh nel modello.</p>
-      ${previewMeasures.length ? `<div class="product-preview-grid">
+      ${meshMappingSection()}</section></div>
+    <aside class="card product-preview-panel"><h2>Anteprima e riepilogo</h2>
+      <p class="muted">La preview si aggiorna quando selezioni un GLB e quando modifichi attributi e misure.</p>
+      <div class="product-preview-grid">
         <div><label for="preview-measure">Modello per misura</label>
-          <select id="preview-measure">${previewMeasures.map((measure) => `<option value="${measure.id_misura}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)}</option>`).join('')}</select>
+          <select id="preview-measure">${previewMeasures.map((measure) => `<option value="${measure.previewId}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)}</option>`).join('')}</select>
           <div class="product-preview-stage" id="productPreview"></div>
-          <p class="preview-status muted" id="preview-status" role="status">Caricamento del modello…</p>
+          <p class="preview-status muted" id="preview-status" role="status">${previewMeasures.length ? 'Caricamento del modello…' : 'Associa un GLB a una misura per avviare la preview.'}</p>
         </div>
-        <div class="preview-attributes"><h3>Attributi del GLB</h3><div id="preview-attributes">${previewAttributesMarkup(previewMeasures[0].id_misura)}</div></div></div>`
-      : '<p class="empty">Associa un GLB a una misura per avviare la prova.</p>'}</section>
-    </div>`}
+        <div class="preview-attributes"><h3>Attributi del GLB</h3><div id="preview-attributes">${previewMeasures.length ? previewAttributesMarkup(previewMeasures[0].previewId) : '<p class="muted">Gli attributi mappati compariranno qui.</p>'}</div></div></div>
+      <section class="product-summary"><h3>Misure</h3><ul id="product-summary-measures">${summaryMeasuresMarkup()}</ul></section>
+      <section class="product-summary"><h3>Attributi</h3><ul id="product-summary-attributes">${summaryAttributesMarkup()}</ul></section>
+    </aside></div>`}
     ${saveBar(isNew ? 'Crea prodotto' : 'Salva tutto')}`,
     [['Prodotti', '#/prodotti'], [isNew ? 'Nuovo prodotto' : `Prodotto ${id}`]]);
 
+  if (!isNew) refreshProductSummary();
   const originalMappings = { ...meshMappingsById };
   let createdId = null;
 
@@ -475,6 +509,8 @@ async function viewProdotto(idParam) {
   $('#form-prodotto').onsubmit = (e) => { e.preventDefault(); $('#save-all').click(); };
   if (isNew) return;
 
+  let refreshPreviewMeasures = () => {};
+  let loadSelectedMeasure = async () => {};
   const uploadMeasureGlb = async (input) => {
     const file = input.files[0];
     if (!file) return;
@@ -487,6 +523,22 @@ async function viewProdotto(idParam) {
       tr.dataset.glb = resource.id_glb;
       $('[data-glb-name]', tr).value = file.name;
       status.textContent = 'Caricato: premi Salva tutto per associarlo';
+      meshRows = meshRows.filter((mesh) => mesh.id_glb !== resource.id_glb).concat(resource.meshes || []);
+      const previewId = tr.dataset.previewId;
+      previewMeasures = previewMeasures.filter((measure) => measure.previewId !== previewId);
+      previewMeasures.push({
+        previewId,
+        id_misura: previewId,
+        id_glb: resource.id_glb,
+        dim_x: $('[data-f=dim_x]', tr).value,
+        dim_y: $('[data-f=dim_y]', tr).value,
+        dim_z: $('[data-f=dim_z]', tr).value,
+        unita_misura: $('[data-f=unita_misura]', tr).value,
+        risorse_glb: { id_glb: resource.id_glb, nome_file: file.name, percorso_risorsa: resource.path },
+      });
+      refreshPreviewMeasures(previewId);
+      refreshProductSummary();
+      await loadSelectedMeasure();
     } catch (error) {
       status.textContent = '';
       toast(errMsg(error), true);
@@ -504,22 +556,45 @@ async function viewProdotto(idParam) {
     if (!action) return;
     const tr = e.target.closest('tr');
     const mid = tr.dataset.misura;
-    if (action === 'drop') { tr.remove(); return; }
+    if (action === 'drop') {
+      previewMeasures = previewMeasures.filter((measure) => measure.previewId !== tr.dataset.previewId);
+      tr.remove();
+      refreshPreviewMeasures();
+      loadSelectedMeasure();
+      refreshProductSummary();
+      return;
+    }
     if (action === 'clear-glb') {
       tr.dataset.glb = '';
       $('[data-glb-name]', tr).value = '';
       $('[data-upload-status]', tr).textContent = 'Rimosso: premi Salva tutto per confermare';
+      previewMeasures = previewMeasures.filter((measure) => measure.previewId !== tr.dataset.previewId);
+      refreshPreviewMeasures();
+      loadSelectedMeasure();
       return;
     }
     if (action === 'del') {
       if (!confirm('Eliminare la misura e le combinazioni commerciali collegate?')) return;
-      if (await act(() => q(sb.from('misure').delete().eq('id_misura', mid)), 'Misura eliminata')) tr.remove();
+      if (await act(() => q(sb.from('misure').delete().eq('id_misura', mid)), 'Misura eliminata')) {
+        previewMeasures = previewMeasures.filter((measure) => measure.previewId !== tr.dataset.previewId);
+        tr.remove();
+        refreshPreviewMeasures();
+        loadSelectedMeasure();
+        refreshProductSummary();
+      }
     }
   };
   $('#add-misura').onclick = () => {
     $('#misure').insertAdjacentHTML('beforeend', misuraRow(null));
+    refreshProductSummary();
     $('#misure tr:last-child [data-f=dim_x]').focus();
   };
+  const refreshMeasuresSummary = () => {
+    refreshProductSummary();
+    refreshPreviewMeasures();
+  };
+  $('#misure').addEventListener('input', refreshMeasuresSummary);
+  $('#misure').addEventListener('change', refreshMeasuresSummary);
 
   let redrawMapping = () => {};
   const bindMeshMapping = () => {
@@ -538,6 +613,8 @@ async function viewProdotto(idParam) {
       if (attributeId) meshMappingsById[key] = attributeId;
       else delete meshMappingsById[key];
       $('#preview-status').textContent = 'Mappatura modificata: premi Salva tutto per confermare.';
+      redrawPreviewAttributes();
+      applyCurrentPreview();
     });
     container.addEventListener('click', (e) => {
       const button = e.target.closest('[data-highlight-mesh]');
@@ -558,17 +635,23 @@ async function viewProdotto(idParam) {
   };
   bindMeshMapping();
 
+  let redrawPreviewAttributes = () => {};
+  let applyCurrentPreview = () => {};
   const attrSelect = $('#nuovo-attr');
   const bindAttrBlock = (block) => {
     const aid = Number(block.dataset.attr);
     // il default può essere scelto solo fra le opzioni spuntate
     block.addEventListener('change', (e) => {
-      if (!e.target.dataset.opt) return;
-      const def = $('[data-f=default]', block);
-      const current = def.value;
-      const checked = $$('[data-opt]:checked', block).map((c) => c.dataset.opt);
-      def.innerHTML = '<option value="">— nessuno —</option>' + checked.map((v) => `<option value="${v}">${esc(e.target.closest('.opt-grid').querySelector(`[data-opt="${v}"]`).parentElement.textContent.trim())}</option>`).join('');
-      def.value = checked.includes(current) ? current : '';
+      if (e.target.dataset.opt) {
+        const def = $('[data-f=default]', block);
+        const current = def.value;
+        const checked = $$('[data-opt]:checked', block).map((c) => c.dataset.opt);
+        def.innerHTML = '<option value="">— nessuno —</option>' + checked.map((v) => `<option value="${v}">${esc(e.target.closest('.opt-grid').querySelector(`[data-opt="${v}"]`).parentElement.textContent.trim())}</option>`).join('');
+        def.value = checked.includes(current) ? current : '';
+      }
+      refreshProductSummary();
+      redrawPreviewAttributes();
+      applyCurrentPreview();
     });
     block.onclick = async (e) => {
       if (!e.target.closest('[data-act=remove]')) return;
@@ -583,6 +666,9 @@ async function viewProdotto(idParam) {
       block.remove();
       $('#no-attr').hidden = assegnati.length > 0;
       redrawMapping();
+      refreshProductSummary();
+      redrawPreviewAttributes();
+      applyCurrentPreview();
     };
   };
   $$('.attr-block').forEach(bindAttrBlock);
@@ -604,6 +690,9 @@ async function viewProdotto(idParam) {
       attrSelect.querySelector(`option[value="${aid}"]`).remove();
       $('#no-attr').hidden = true;
       redrawMapping();
+      refreshProductSummary();
+      redrawPreviewAttributes();
+      applyCurrentPreview();
     } catch (error) {
       toast(errMsg(error), true);
     }
@@ -611,7 +700,7 @@ async function viewProdotto(idParam) {
     attrSelect.disabled = false;
   };
 
-  if (previewMeasures.length) {
+  {
     const stage = $('#productPreview');
     const status = $('#preview-status');
     const measureSelect = $('#preview-measure');
@@ -667,50 +756,105 @@ async function viewProdotto(idParam) {
       status.textContent = messages.length ? messages.join(' ') : 'Anteprima aggiornata.';
       status.classList.toggle('error-text', messages.length > 0);
     };
-    const loadSelectedMeasure = async () => {
-      const selectedMeasure = previewMeasures.find((measure) => String(measure.id_misura) === measureSelect.value);
-      if (!selectedMeasure) return;
+    const refreshPreviewAttributes = () => {
+      const selectedOptions = new Map($$('[data-preview-attribute]', $('#preview-attributes'))
+        .map((select) => [select.dataset.previewAttribute, select.value]));
+      const selectedMeasure = previewMeasures.find((measure) => String(measure.previewId) === measureSelect.value);
+      $('#preview-attributes').innerHTML = selectedMeasure
+        ? previewAttributesMarkup(selectedMeasure.previewId)
+        : '<p class="muted">Gli attributi mappati compariranno qui.</p>';
+      $$('[data-preview-attribute]', $('#preview-attributes')).forEach((select) => {
+        if (selectedOptions.has(select.dataset.previewAttribute)) select.value = selectedOptions.get(select.dataset.previewAttribute);
+      });
+      bindPreviewAttributes();
+    };
+    refreshPreviewMeasures = (preferredId = null) => {
+      previewMeasures.forEach((measure) => {
+        const row = $$('#misure tr').find((item) => item.dataset.previewId === String(measure.previewId));
+        if (!row) return;
+        measure.dim_x = $('[data-f=dim_x]', row).value;
+        measure.dim_y = $('[data-f=dim_y]', row).value;
+        measure.dim_z = $('[data-f=dim_z]', row).value;
+        measure.unita_misura = $('[data-f=unita_misura]', row).value;
+      });
+      const options = previewMeasures.map((measure) => `<option value="${esc(measure.previewId)}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)}</option>`).join('');
+      const mappingOptions = previewMeasures.map((measure) => `<option value="${esc(measure.previewId)}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)} · ${esc(measure.risorse_glb.nome_file)}</option>`).join('');
+      const currentPreviewId = previewMeasures.some((measure) => String(measure.previewId) === measureSelect.value) ? measureSelect.value : null;
+      const selectedId = preferredId || currentPreviewId || previewMeasures[0]?.previewId || '';
+      const mappingSelect = $('#mapping-measure');
+      const currentMappingId = previewMeasures.some((measure) => String(measure.previewId) === mappingSelect?.value) ? mappingSelect.value : null;
+      measureSelect.innerHTML = options;
+      measureSelect.value = String(selectedId);
+      if (mappingSelect) {
+        mappingSelect.innerHTML = mappingOptions;
+        mappingSelect.value = String(preferredId || currentMappingId || selectedId);
+        redrawMapping();
+      }
+      refreshPreviewAttributes();
+      refreshProductSummary();
+    };
+    let loadRevision = 0;
+    loadSelectedMeasure = async () => {
+      const revision = ++loadRevision;
+      const selectedMeasure = previewMeasures.find((measure) => String(measure.previewId) === measureSelect.value);
+      if (!selectedMeasure) {
+        status.textContent = 'Associa un GLB a una misura per avviare la preview.';
+        measureSelect.disabled = false;
+        previewViewer?.dispose();
+        previewViewer = null;
+        activeProductPreview = null;
+        stage.replaceChildren();
+        refreshPreviewAttributes();
+        return;
+      }
       applyRevision += 1;
       measureSelect.disabled = true;
       status.textContent = 'Caricamento del modello…';
       status.classList.remove('error-text');
       try {
         const url = await signedUrlFor(selectedMeasure.risorse_glb.percorso_risorsa);
-        if (previewToken !== productPreviewToken) return;
+        if (revision !== loadRevision || previewToken !== productPreviewToken) return;
         const { createProductPreview } = await import('./product-preview.js');
+        if (revision !== loadRevision || previewToken !== productPreviewToken) return;
         if (!previewViewer) {
           previewViewer = createProductPreview(stage);
           activeProductPreview = previewViewer;
         }
         await previewViewer.loadProduct(url);
-        if (previewToken !== productPreviewToken) return;
-        $('#preview-attributes').innerHTML = previewAttributesMarkup(selectedMeasure.id_misura);
-        bindPreviewAttributes();
+        if (revision !== loadRevision || previewToken !== productPreviewToken) return;
+        refreshPreviewAttributes();
         previewViewer.highlight($('#mapping-highlighted').textContent === 'nessuna' ? null : $('#mapping-highlighted').textContent);
         await applyPreview();
       } catch (error) {
+        if (revision !== loadRevision) return;
         status.textContent = `Impossibile caricare l’anteprima: ${errMsg(error)}`;
         status.classList.add('error-text');
       } finally {
-        measureSelect.disabled = false;
+        if (revision === loadRevision) measureSelect.disabled = false;
       }
     };
     const bindPreviewAttributes = () => {
       $$('[data-preview-attribute]', $('#preview-attributes')).forEach((select) => {
         select.onchange = () => {
-        applyPreview().catch((error) => {
-          status.textContent = `Impossibile aggiornare l’anteprima: ${errMsg(error)}`;
-          status.classList.add('error-text');
-        });
+          applyPreview().catch((error) => {
+            status.textContent = `Impossibile aggiornare l’anteprima: ${errMsg(error)}`;
+            status.classList.add('error-text');
+          });
         };
       });
     };
+    redrawPreviewAttributes = refreshPreviewAttributes;
+    applyCurrentPreview = () => applyPreview().catch((error) => {
+      status.textContent = `Impossibile aggiornare l’anteprima: ${errMsg(error)}`;
+      status.classList.add('error-text');
+    });
     measureSelect.onchange = loadSelectedMeasure;
     stage.addEventListener('product-preview-highlight', (event) => {
       previewViewer?.highlight(event.detail.path);
     });
     bindPreviewAttributes();
-    loadSelectedMeasure();
+    refreshPreviewMeasures();
+    if (previewMeasures.length) loadSelectedMeasure();
   }
 }
 
@@ -754,10 +898,11 @@ async function viewAttributi() {
 }
 
 // ---------- attributi: scheda ----------
-async function viewAttributo(idParam) {
+async function viewAttributo(idParam, returnTo = '') {
   const isNew = idParam === 'nuovo';
   const id = isNew ? null : Number(idParam);
-  const crumbs = [['Attributi', '#/attributi'], [isNew ? 'Nuovo attributo' : `Attributo ${id}`]];
+  const attrRoute = (attrId) => withReturn(`#/attributi/${attrId}`, returnTo);
+  const crumbs = [[returnTo ? 'Torna alla pagina precedente' : 'Attributi', returnTo || '#/attributi'], [isNew ? 'Nuovo attributo' : `Attributo ${id}`]];
   shell('<div class="empty">Caricamento…</div>', crumbs);
 
   let attr = { nome: '', descrizione: '', tipo_attributo: 'Materiale', id_attributo_padre: null, attivo: true };
@@ -817,12 +962,12 @@ async function viewAttributo(idParam) {
       <div class="table-scroll"><table><thead><tr><th>Nome</th><th>Descrizione</th><th>${attr.tipo_attributo === 'Materiale' ? 'Materiale' : 'Visibilità'}</th><th>Ordine</th><th>Attiva</th><th class="col-narrow">Usata</th><th></th></tr></thead>
       <tbody id="opzioni">${opzioni.map((o) => opzioneRow(o)).join('')}${opzioneRow(null, nextOrdine)}</tbody></table></div>
       <div class="add-row row"><div class="shrink"><button type="button" id="add-option">${btn('plus', 'Aggiungi opzione')}</button></div>
-      ${attr.tipo_attributo === 'Materiale' ? `<div class="shrink"><a class="btn" href="#/materiali/nuovo">${btn('plus', 'Nuovo materiale')}</a></div>` : ''}</div>
+      ${attr.tipo_attributo === 'Materiale' ? `<div class="shrink"><a class="btn" href="${withReturn('#/materiali/nuovo', location.hash)}">${btn('plus', 'Nuovo materiale')}</a></div>` : ''}</div>
     </section>`;
 
   shell(`
     <div class="page-head"><div><h1>${isNew ? 'Nuovo attributo' : esc(attr.nome)}</h1>
-      <span class="muted">${derivato ? 'Attributo derivato' : 'Attributo generale'}</span></div><a class="btn" href="#/attributi">${btn('close', 'Chiudi')}</a></div>
+      <span class="muted">${derivato ? 'Attributo derivato' : 'Attributo generale'}</span></div><a class="btn" href="${returnTo || '#/attributi'}">${btn('close', returnTo ? 'Torna' : 'Chiudi')}</a></div>
     <form class="card" id="form-attr">
       <h2>Dati attributo</h2>
       <div class="row">
@@ -878,8 +1023,8 @@ async function viewAttributo(idParam) {
       if (toAdd.length) await q(sb.from('attributi_opzioni').insert(toAdd.map((o) => ({ id_attributo: id, id_opzione: o }))));
     }
   };
-  const reload = () => viewAttributo(String(id ?? createdId));
-  bindSaveAll(saveAttribute, () => (isNew ? go(`#/attributi/${createdId}`) : reload()));
+  const reload = () => viewAttributo(String(id ?? createdId), returnTo);
+  bindSaveAll(saveAttribute, () => (isNew ? go(attrRoute(createdId)) : reload()));
   $('#form-attr').onsubmit = (e) => { e.preventDefault(); $('#save-all').click(); };
   if (isNew || derivato) return;
 
@@ -906,7 +1051,7 @@ async function viewAttributo(idParam) {
 }
 
 // ---------- materiali ----------
-async function viewMateriali(idParam) {
+async function viewMateriali(idParam, returnTo = '') {
   const focusNew = idParam === 'nuovo';
   shell('<div class="empty">Caricamento…</div>', [['Materiali']]);
   const [materiali, risorse, usedRows] = await Promise.all([
@@ -929,6 +1074,7 @@ async function viewMateriali(idParam) {
   shell(`
     <div class="page-head"><div><h1>Materiali</h1><span class="muted">${materiali.length} materiali · associa un GLB dedicato a ciascun materiale</span></div>
       <div class="row"><div class="search-wrap">${icon('search')}<input class="search" id="search" placeholder="Cerca…" aria-label="Filtra materiali"></div>
+        ${returnTo ? `<a class="btn shrink" href="${returnTo}">${btn('close', 'Torna')}</a>` : ''}
         <button class="btn danger shrink" type="button" id="delete-all" ${materiali.length ? '' : 'disabled'}>${btn('trash', 'Elimina tutti')}</button>
         <button class="btn primary shrink" type="button" id="new-material">${btn('plus', 'Nuovo materiale')}</button></div></div>
     <section class="card table-scroll"><table><thead><tr><th>Nome</th><th>Descrizione</th><th>GLB</th><th>Utilizzo</th><th></th></tr></thead>
@@ -962,7 +1108,7 @@ async function viewMateriali(idParam) {
       await q(sb.from('materiali').delete().gt('id_materiale', 0));
       await removeGlbResources(glbIds);
     }, 'Materiali eliminati');
-    if (ok) viewMateriali();
+    if (ok) viewMateriali(idParam, returnTo);
   };
 
   const focusNewRow = (append) => {
@@ -1028,7 +1174,7 @@ async function viewMateriali(idParam) {
     });
     for (const op of ops) await op();
   };
-  bindSaveAll(saveMaterials, () => (location.hash === '#/materiali/nuovo' ? go('#/materiali') : viewMateriali()));
+  bindSaveAll(saveMaterials, () => (returnTo ? go(returnTo) : location.hash === '#/materiali/nuovo' ? go('#/materiali') : viewMateriali()));
 }
 
 // ---------- commerciale: utilità ----------
@@ -1415,12 +1561,14 @@ async function viewTest(idParam) {
 // ---------- routing ----------
 async function route() {
   if (!session) return viewLogin();
-  const [a, b] = location.hash.replace(/^#\/?/, '').split('/');
+  const [routePath, query = ''] = location.hash.replace(/^#\/?/, '').split('?');
+  const [a, b] = routePath.split('/');
+  const returnTo = new URLSearchParams(query).get('return') || '';
   try {
     if (!a) return await viewMenu();
     if (a === 'prodotti') return b ? await viewProdotto(b) : await viewProdotti();
-    if (a === 'attributi') return b ? await viewAttributo(b) : await viewAttributi();
-    if (a === 'materiali') return await viewMateriali(b);
+    if (a === 'attributi') return b ? await viewAttributo(b, returnTo) : await viewAttributi();
+    if (a === 'materiali') return await viewMateriali(b, returnTo);
     if (a === 'codifica') return await viewCodifica(b);
     if (a === 'test') return await viewTest(b);
     go('#/');
