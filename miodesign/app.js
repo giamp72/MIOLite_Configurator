@@ -150,6 +150,8 @@ const ICONS = {
   check: '<circle cx="12" cy="12" r="9"/><path d="m8 12.500 3 3 5-6"/>',
   save: '<path d="M5 4h11l3 3v12a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1Z"/><path d="M8 4v5h7V4M8 20v-6h8v6"/>',
   close: '<path d="m6 6 12 12M18 6 6 18"/>',
+  expand: '<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>',
+  shrink: '<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>',
 };
 const icon = (name) => `<svg class="ico" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
 const btn = (name, label) => `${icon(name)}<span>${label}</span>`;
@@ -157,9 +159,10 @@ const btn = (name, label) => `${icon(name)}<span>${label}</span>`;
 const go = (hash) => { location.hash = hash; };
 const withReturn = (hash, returnTo) => `${hash}${returnTo ? `?return=${encodeURIComponent(returnTo)}` : ''}`;
 
-const saveBar = (label = 'Salva tutto') => `<div class="save-bar"><span class="muted">Le modifiche vengono salvate solo con questo pulsante.</span><button class="primary" id="save-all" type="button">${btn('save', label)}</button></div>`;
+const saveBar = (label = 'Salva tutto', extra = '') => `<div class="save-bar">${extra}<span class="muted">Le modifiche vengono salvate solo con questo pulsante.</span><button class="primary" id="save-all" type="button">${btn('save', label)}</button></div>`;
 
 // Collega il pulsante unico di salvataggio: fn lancia un errore se qualcosa non va, after parte solo a salvataggio riuscito.
+// Ritorna saveAndGo(target): salva e poi naviga (usato dai link che lasciano la pagina con modifiche non salvate).
 function bindSaveAll(fn, after) {
   const button = $('#save-all');
   button.onclick = async () => {
@@ -167,6 +170,12 @@ function bindSaveAll(fn, after) {
     const ok = await act(fn, 'Modifiche salvate');
     button.disabled = false;
     if (ok && after) after();
+  };
+  return async (target) => {
+    button.disabled = true;
+    const ok = await act(fn, 'Modifiche salvate');
+    button.disabled = false;
+    if (ok) go(typeof target === 'function' ? target() : target);
   };
 }
 
@@ -407,7 +416,8 @@ async function viewProdotto(idParam) {
       <div class="field"><label for="nome">Nome *</label><input id="nome" required maxlength="200" value="${esc(prodotto.nome)}"></div>
       <div class="field"><label for="descrizione">Descrizione</label><textarea id="descrizione">${esc(prodotto.descrizione)}</textarea></div>
       <div class="field"><label class="check"><input type="checkbox" id="attivo" ${prodotto.attivo ? 'checked' : ''}> Attivo nel catalogo</label></div>
-    </form><p class="muted">Dopo la creazione potrai definire misure e attributi.</p>` : `
+    </form><p class="muted">Dopo la creazione potrai definire misure e attributi.</p>
+    <div class="row"><div class="shrink"><button class="btn" type="button" id="new-attr-link">${btn('plus', 'Salva e definisci nuovo attributo')}</button></div></div>` : `
     <div class="product-editor-layout"><div class="product-editor-fields">
     <form class="card" id="form-prodotto">
       <h2>Dati prodotto</h2>
@@ -425,14 +435,15 @@ async function viewProdotto(idParam) {
       <p class="muted" id="no-attr" ${assegnati.length ? 'hidden' : ''}>Nessun attributo assegnato.</p>
       <div class="row"><div><label for="nuovo-attr">Aggiungi attributo esistente</label><select id="nuovo-attr">
         <option value="">— seleziona —</option>${assegnabili.map((a) => `<option value="${a.id_attributo}">${esc(attributeLabel(a))} (${esc(a.tipo_attributo)})</option>`).join('')}</select></div>
-        <div class="shrink"><a class="btn" href="${withReturn('#/attributi/nuovo', location.hash)}">${btn('plus', 'Definisci nuovo attributo')}</a></div>
+        <div class="shrink"><button class="btn" type="button" id="new-attr-link">${btn('plus', 'Definisci nuovo attributo')}</button></div>
         </div><p class="muted">Puoi aggiungerne quanti vuoi: tutto viene salvato con il pulsante in basso.</p></section>
     <section class="card"><h2>Mappatura mesh</h2>
       <p class="muted">Per ogni mesh puoi assegnare separatamente un attributo materiale e un attributo di visibilità. Ogni GLB ha la propria mappatura.</p>
       <p class="muted">Mesh selezionata: <code id="mapping-highlighted">nessuna</code></p>
       ${meshMappingSection()}</section></div>
     <aside class="card product-preview-panel">
-      <div class="preview-fixed"><h2>Anteprima di configurazione</h2>
+      <div class="preview-fixed"><div class="preview-title"><h2>Anteprima di configurazione</h2>
+        <button class="small" type="button" id="toggle-fullscreen" aria-pressed="false">${btn('expand', 'Schermo intero')}</button></div>
         <div class="product-preview-grid"><div><label for="preview-measure">Modello per misura</label>
           <select id="preview-measure">${previewMeasures.map((measure) => `<option value="${measure.previewId}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)}</option>`).join('')}</select>
           <div class="product-preview-stage" id="productPreview"></div>
@@ -444,7 +455,7 @@ async function viewProdotto(idParam) {
         <section class="product-summary"><h3>Attributi</h3><ul id="product-summary-attributes">${summaryAttributesMarkup()}</ul></section>
       </div>
     </aside></div>`}
-    ${saveBar(isNew ? 'Crea prodotto' : 'Salva tutto')}`,
+    ${saveBar(isNew ? 'Crea prodotto' : 'Salva tutto', isNew ? '' : `<button class="danger shrink" type="button" id="delete-product">${btn('trash', 'Elimina prodotto')}</button>`)}`,
     [['Prodotti', '#/prodotti'], [isNew ? 'Nuovo prodotto' : `Prodotto ${id}`]]);
 
   if (!isNew) refreshProductSummary();
@@ -506,9 +517,30 @@ async function viewProdotto(idParam) {
     }
   };
   const reload = () => viewProdotto(String(id ?? createdId));
-  bindSaveAll(saveProduct, () => (isNew ? go(`#/prodotti/${createdId}`) : reload()));
+  const saveAndGo = bindSaveAll(saveProduct, () => (isNew ? go(`#/prodotti/${createdId}`) : reload()));
+  $('#new-attr-link').onclick = () => saveAndGo(() => withReturn('#/attributi/nuovo', `#/prodotti/${id ?? createdId}`));
   $('#form-prodotto').onsubmit = (e) => { e.preventDefault(); $('#save-all').click(); };
   if (isNew) return;
+
+  $('#delete-product').onclick = async () => {
+    if (!confirm(`Eliminare il prodotto "${prodotto.nome}" con misure, attributi e combinazioni collegate?`)) return;
+    if (await act(() => q(sb.from('prodotti').delete().eq('id_prodotto', id)), 'Prodotto eliminato')) go('#/prodotti');
+  };
+
+  const previewPanel = $('.product-preview-panel');
+  const fullscreenButton = $('#toggle-fullscreen');
+  const setFullscreen = (on) => {
+    previewPanel.classList.toggle('expanded', on);
+    document.body.classList.toggle('no-scroll', on);
+    fullscreenButton.setAttribute('aria-pressed', String(on));
+    fullscreenButton.innerHTML = on ? btn('shrink', 'Torna alla vista precedente') : btn('expand', 'Schermo intero');
+  };
+  fullscreenButton.onclick = () => setFullscreen(!previewPanel.classList.contains('expanded'));
+  const onEscape = (event) => {
+    if (!previewPanel.isConnected) return document.removeEventListener('keydown', onEscape);
+    if (event.key === 'Escape' && previewPanel.classList.contains('expanded')) setFullscreen(false);
+  };
+  document.addEventListener('keydown', onEscape);
 
   let refreshPreviewMeasures = () => {};
   let loadSelectedMeasure = async () => {};
@@ -963,7 +995,7 @@ async function viewAttributo(idParam, returnTo = '') {
       <div class="table-scroll"><table><thead><tr><th>Nome</th><th>Descrizione</th><th>${attr.tipo_attributo === 'Materiale' ? 'Materiale' : 'Visibilità'}</th><th>Ordine</th><th>Attiva</th><th class="col-narrow">Usata</th><th></th></tr></thead>
       <tbody id="opzioni">${opzioni.map((o) => opzioneRow(o)).join('')}${opzioneRow(null, nextOrdine)}</tbody></table></div>
       <div class="add-row row"><div class="shrink"><button type="button" id="add-option">${btn('plus', 'Aggiungi opzione')}</button></div>
-      ${attr.tipo_attributo === 'Materiale' ? `<div class="shrink"><a class="btn" href="${withReturn('#/materiali/nuovo', location.hash)}">${btn('plus', 'Nuovo materiale')}</a></div>` : ''}</div>
+      ${attr.tipo_attributo === 'Materiale' ? `<div class="shrink"><button class="btn" type="button" id="new-material-link">${btn('plus', 'Salva e definisci nuovo materiale')}</button></div>` : ''}</div>
     </section>`;
 
   shell(`
@@ -1025,7 +1057,8 @@ async function viewAttributo(idParam, returnTo = '') {
     }
   };
   const reload = () => viewAttributo(String(id ?? createdId), returnTo);
-  bindSaveAll(saveAttribute, () => (isNew ? go(attrRoute(createdId)) : reload()));
+  const saveAndGo = bindSaveAll(saveAttribute, () => (isNew ? go(attrRoute(createdId)) : reload()));
+  $('#new-material-link')?.addEventListener('click', () => saveAndGo(withReturn('#/materiali/nuovo', location.hash)));
   $('#form-attr').onsubmit = (e) => { e.preventDefault(); $('#save-all').click(); };
   if (isNew || derivato) return;
 
