@@ -409,8 +409,7 @@ async function viewProdotto(idParam) {
   };
 
   shell(`
-    <div class="page-head"><div><h1>${isNew ? 'Nuovo prodotto' : esc(prodotto.nome)}</h1>
-      <span class="muted">${isNew ? 'L\'ID progressivo verrà assegnato al salvataggio.' : `ID prodotto ${id}`}</span></div><a class="btn" href="#/prodotti">${btn('close', 'Chiudi')}</a></div>
+    <div class="page-head product-head"><a class="btn" href="#/prodotti">${btn('close', 'Chiudi')}</a></div>
     ${isNew ? `<form class="card" id="form-prodotto">
       <h2>Dati prodotto</h2>
       <div class="field"><label for="nome">Nome *</label><input id="nome" required maxlength="200" value="${esc(prodotto.nome)}"></div>
