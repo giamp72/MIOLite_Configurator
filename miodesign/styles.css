@@ -112,7 +112,8 @@ td.actions { white-space: nowrap; text-align: right; }
 .product-preview-grid button[data-highlight-mesh].selected { border-color: #a855f7; color: #7e22ce; background: #f3e8ff; }
 .preview-attributes { padding: 1rem; border: 1px solid var(--line); border-radius: 12px; background: var(--hover); }
 .preview-attributes h3 { margin: 0 0 .75rem; font-size: 1rem; }
-.product-editor-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, .85fr); gap: 1.25rem; height: calc(100vh - 12rem); min-height: 480px; }
+.product-editor-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(340px, .85fr); gap: 1.25rem; height: calc(100vh - 19rem); min-height: 420px; }
+.product-editor-layout + .save-bar { position: static; margin-top: 1rem; }
 .product-editor-fields { min-width: 0; min-height: 0; overflow-y: auto; padding-right: .25rem; }
 .product-editor-layout .product-preview-panel { display: flex; flex-direction: column; min-width: 0; min-height: 0; margin-bottom: 0; overflow: hidden; }
 .product-preview-panel .preview-fixed { flex: none; }
