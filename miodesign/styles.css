@@ -214,3 +214,4 @@ body.no-scroll { overflow: hidden; }
   .product-editor-layout .product-preview-panel.expanded { display: flex; }
   .product-preview-panel.expanded .product-preview-stage { height: 45vh; }
 }
+.preview-measures h3 { margin: 0 0 .5rem; font-size: 1rem; }

@@ -394,18 +394,9 @@ async function viewProdotto(idParam) {
       return `<li><strong>${esc(dimension)} ${esc(unit)}</strong><span class="muted">${esc(glbName)}</span></li>`;
     }).join('') : '<li class="muted">Aggiungi una misura e associa un GLB.</li>';
   };
-  const summaryAttributesMarkup = () => assegnati.length
-    ? assegnati.map((attribute) => {
-      const block = $(`.attr-block[data-attr="${attribute.id_attributo}"]`);
-      const selected = block ? $$('[data-opt]:checked', block).length : 0;
-      return `<li><strong>${esc(attribute.attributi.nome)}</strong><span class="muted">${esc(attribute.attributi.tipo_attributo)} · ${selected} opzioni ammesse</span></li>`;
-    }).join('')
-    : '<li class="muted">Nessun attributo assegnato.</li>';
   const refreshProductSummary = () => {
     const measures = $('#product-summary-measures');
-    const attributes = $('#product-summary-attributes');
     if (measures) measures.innerHTML = summaryMeasuresMarkup();
-    if (attributes) attributes.innerHTML = summaryAttributesMarkup();
   };
 
   shell(`
@@ -447,10 +438,9 @@ async function viewProdotto(idParam) {
           <p class="preview-status muted" id="preview-status" role="status">${previewMeasures.length ? 'Caricamento del modello…' : 'Associa un GLB a una misura per avviare la preview.'}</p>
         </div></div></div>
       <div class="preview-scroll">
-        <div class="field"><label for="preview-measure">Modello per misura</label>
+        <div class="field preview-measures"><h3>Misure</h3><label for="preview-measure">Modello per misura</label>
           <select id="preview-measure">${previewMeasures.map((measure) => `<option value="${measure.previewId}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)}</option>`).join('')}</select></div>
         <div class="preview-attributes"><h3>Attributi del GLB</h3><div id="preview-attributes">${previewMeasures.length ? previewAttributesMarkup(previewMeasures[0].previewId) : '<p class="muted">Gli attributi mappati compariranno qui.</p>'}</div></div>
-        <section class="product-summary"><h3>Attributi</h3><ul id="product-summary-attributes">${summaryAttributesMarkup()}</ul></section>
       </div>
     </aside></div>`}
     ${saveBar(isNew ? 'Crea prodotto' : 'Salva tutto', isNew ? '' : `<button class="danger shrink" type="button" id="delete-product">${btn('trash', 'Elimina prodotto')}</button>`)}`,
