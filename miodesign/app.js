@@ -431,17 +431,18 @@ async function viewProdotto(idParam) {
       <p class="muted">Per ogni mesh puoi assegnare separatamente un attributo materiale e un attributo di visibilità. Ogni GLB ha la propria mappatura.</p>
       <p class="muted">Mesh selezionata: <code id="mapping-highlighted">nessuna</code></p>
       ${meshMappingSection()}</section></div>
-    <aside class="card product-preview-panel"><h2>Anteprima e riepilogo</h2>
-      <p class="muted">La preview si aggiorna quando selezioni un GLB e quando modifichi attributi e misure.</p>
-      <div class="product-preview-grid">
-        <div><label for="preview-measure">Modello per misura</label>
+    <aside class="card product-preview-panel">
+      <div class="preview-fixed"><h2>Anteprima di configurazione</h2>
+        <div class="product-preview-grid"><div><label for="preview-measure">Modello per misura</label>
           <select id="preview-measure">${previewMeasures.map((measure) => `<option value="${measure.previewId}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)}</option>`).join('')}</select>
           <div class="product-preview-stage" id="productPreview"></div>
           <p class="preview-status muted" id="preview-status" role="status">${previewMeasures.length ? 'Caricamento del modello…' : 'Associa un GLB a una misura per avviare la preview.'}</p>
-        </div>
-        <div class="preview-attributes"><h3>Attributi del GLB</h3><div id="preview-attributes">${previewMeasures.length ? previewAttributesMarkup(previewMeasures[0].previewId) : '<p class="muted">Gli attributi mappati compariranno qui.</p>'}</div></div></div>
-      <section class="product-summary"><h3>Misure</h3><ul id="product-summary-measures">${summaryMeasuresMarkup()}</ul></section>
-      <section class="product-summary"><h3>Attributi</h3><ul id="product-summary-attributes">${summaryAttributesMarkup()}</ul></section>
+        </div></div></div>
+      <div class="preview-scroll">
+        <div class="preview-attributes"><h3>Attributi del GLB</h3><div id="preview-attributes">${previewMeasures.length ? previewAttributesMarkup(previewMeasures[0].previewId) : '<p class="muted">Gli attributi mappati compariranno qui.</p>'}</div></div>
+        <section class="product-summary"><h3>Misure</h3><ul id="product-summary-measures">${summaryMeasuresMarkup()}</ul></section>
+        <section class="product-summary"><h3>Attributi</h3><ul id="product-summary-attributes">${summaryAttributesMarkup()}</ul></section>
+      </div>
     </aside></div>`}
     ${saveBar(isNew ? 'Crea prodotto' : 'Salva tutto')}`,
     [['Prodotti', '#/prodotti'], [isNew ? 'Nuovo prodotto' : `Prodotto ${id}`]]);
