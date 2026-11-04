@@ -443,14 +443,13 @@ async function viewProdotto(idParam) {
     <aside class="card product-preview-panel">
       <div class="preview-fixed"><div class="preview-title"><h2>Anteprima di configurazione</h2>
         <button class="small" type="button" id="toggle-fullscreen" aria-pressed="false">${btn('expand', 'Schermo intero')}</button></div>
-        <div class="product-preview-grid"><div><label for="preview-measure">Modello per misura</label>
-          <select id="preview-measure">${previewMeasures.map((measure) => `<option value="${measure.previewId}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)}</option>`).join('')}</select>
-          <div class="product-preview-stage" id="productPreview"></div>
+        <div class="product-preview-grid"><div><div class="product-preview-stage" id="productPreview"></div>
           <p class="preview-status muted" id="preview-status" role="status">${previewMeasures.length ? 'Caricamento del modello…' : 'Associa un GLB a una misura per avviare la preview.'}</p>
         </div></div></div>
       <div class="preview-scroll">
         <div class="preview-attributes"><h3>Attributi del GLB</h3><div id="preview-attributes">${previewMeasures.length ? previewAttributesMarkup(previewMeasures[0].previewId) : '<p class="muted">Gli attributi mappati compariranno qui.</p>'}</div></div>
-        <section class="product-summary"><h3>Misure</h3><ul id="product-summary-measures">${summaryMeasuresMarkup()}</ul></section>
+        <section class="product-summary"><h3>Misura</h3><label for="preview-measure">Modello per misura</label>
+          <select id="preview-measure">${previewMeasures.map((measure) => `<option value="${measure.previewId}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)}</option>`).join('')}</select></section>
         <section class="product-summary"><h3>Attributi</h3><ul id="product-summary-attributes">${summaryAttributesMarkup()}</ul></section>
       </div>
     </aside></div>`}
