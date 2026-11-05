@@ -930,7 +930,7 @@ async function viewAttributo(idParam, returnTo = '') {
   let opzioni = [], materiali = [], generali = [], padreOpzioni = [], esposte = [];
   const usedOptions = new Set();
   const [mat, gen] = await Promise.all([
-    q(sb.from('materiali').select('id_materiale, nome').order('nome')),
+    q(sb.from('materiali').select('id_materiale, nome, descrizione').order('nome')),
     q(sb.from('attributi').select('id_attributo, nome, descrizione, tipo_attributo').is('id_attributo_padre', null).order('nome')),
   ]);
   materiali = mat; generali = gen;
@@ -958,11 +958,11 @@ async function viewAttributo(idParam, returnTo = '') {
   const derivato = !!attr.id_attributo_padre;
 
   const effetto = (o) => attr.tipo_attributo === 'Materiale'
-    ? `<select data-f="id_materiale"><option value="">— nessun materiale —</option>${materiali.map((m) => `<option value="${m.id_materiale}" ${o?.id_materiale === m.id_materiale ? 'selected' : ''}>${esc(m.nome)}</option>`).join('')}</select>`
+    ? `<select data-f="id_materiale"><option value="">— nessun materiale —</option>${materiali.map((m) => `<option value="${m.id_materiale}" ${o?.id_materiale === m.id_materiale ? 'selected' : ''}>${esc(m.descrizione ? `${m.nome} — ${m.descrizione}` : m.nome)}</option>`).join('')}</select>`
     : `<select data-f="valore_visibilita"><option value="">— non definito —</option><option value="true" ${o?.valore_visibilita === true ? 'selected' : ''}>Mostra</option><option value="false" ${o?.valore_visibilita === false ? 'selected' : ''}>Nascondi</option></select>`;
 
   const opzioneRow = (o, next = 0) => `<tr data-opz="${o?.id_opzione ?? 'new'}">
-      <td><input data-f="nome" maxlength="150" value="${esc(o?.nome)}" placeholder="Nuova opzione" aria-label="Nome"></td>
+      <td style="width:9rem"><input data-f="nome" maxlength="10" value="${esc(o?.nome)}" placeholder="Nuova" aria-label="Nome"></td>
       <td><input data-f="descrizione" value="${esc(o?.descrizione)}" aria-label="Descrizione"></td>
       <td>${effetto(o)}</td>
       <td style="width:80px"><input type="number" data-f="ordine" value="${o ? o.ordine : next}" aria-label="Ordine"></td>
