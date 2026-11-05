@@ -197,6 +197,18 @@ export function createProductPreview(stage) {
         throw error;
       }
     },
+    clear() {
+      if (!model) return;
+      scene.remove(model);
+      for (const [object, material] of originalMaterials) object.material = material;
+      for (const material of appliedMaterials) material.dispose();
+      appliedMaterials.clear();
+      disposeGltf(modelGltf);
+      model = null;
+      modelGltf = null;
+      originalMaterials.clear();
+      originalVisibility.clear();
+    },
     applyConfiguration,
     highlight(path) {
       highlightedPath = path;

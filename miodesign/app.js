@@ -1099,8 +1099,12 @@ async function viewMateriali(idParam, returnTo = '') {
         ${returnTo ? `<a class="btn shrink" href="${returnTo}">${btn('close', 'Torna')}</a>` : ''}
         <button class="btn danger shrink" type="button" id="delete-all" ${materiali.length ? '' : 'disabled'}>${btn('trash', 'Elimina tutti')}</button>
         <button class="btn primary shrink" type="button" id="new-material">${btn('plus', 'Nuovo materiale')}</button></div></div>
+    <div class="materials-layout">
     <section class="card table-scroll"><table><thead><tr><th>Nome</th><th>Descrizione</th><th>GLB</th><th>Utilizzo</th><th></th></tr></thead>
       <tbody id="materials">${materiali.map(materialRow).join('')}${materialRow(null)}</tbody></table></section>
+    <aside class="card material-preview-panel"><h2>Anteprima GLB</h2>
+      <div class="product-preview-stage" id="materialStage"></div><p class="preview-status muted" id="material-status" role="status">Seleziona un materiale.</p></aside>
+    </div>
     <p class="muted">L'ultima riga vuota serve per creare un nuovo materiale. Il GLB viene archiviato in Supabase Storage; per sostituirlo carica un nuovo GLB. Eliminando un materiale viene eliminato anche il suo GLB e il riferimento sulle opzioni degli attributi viene svuotato.</p>
     ${saveBar()}`,
   [['Materiali']]);
@@ -1165,7 +1169,48 @@ async function viewMateriali(idParam, returnTo = '') {
     input.value = '';
   };
   $('#materials').addEventListener('change', (event) => {
-    if (event.target.matches('[data-f=file]')) uploadMaterialGlb(event.target);
+    if (event.target.matches('[data-f=file]')) uploadMaterialGlb(event.target).then(() => previewRow(event.target.closest('tr')));
+  });
+
+  let materialViewer = null;
+  let selectedRow = null;
+  let previewRevision = 0;
+  const previewToken = ++productPreviewToken;
+  activeProductPreview?.dispose();
+  activeProductPreview = null;
+  const previewStatus = $('#material-status');
+  const previewRow = async (row) => {
+    if (!row) return;
+    selectedRow = row;
+    $$('#materials tr.selected').forEach((r) => r.classList.remove('selected'));
+    row.classList.add('selected');
+    const revision = ++previewRevision;
+    const resource = resources.get(String(row.dataset.glb));
+    if (!resource) {
+      previewStatus.textContent = 'Nessun GLB associato al materiale.';
+      materialViewer?.clear();
+      return;
+    }
+    previewStatus.textContent = 'Caricamento del modello…';
+    try {
+      const { data, error } = await sb.storage.from('modelli-glb').createSignedUrl(resource.percorso_risorsa, 300);
+      if (error) throw error;
+      if (revision !== previewRevision || previewToken !== productPreviewToken) return;
+      if (!materialViewer) {
+        const { createProductPreview } = await import('./product-preview.js');
+        if (revision !== previewRevision || previewToken !== productPreviewToken) return;
+        materialViewer = createProductPreview($('#materialStage'));
+        activeProductPreview = materialViewer;
+      }
+      await materialViewer.loadProduct(data.signedUrl);
+      if (revision === previewRevision && previewToken === productPreviewToken) previewStatus.textContent = resource.nome_file || '';
+    } catch (error) {
+      if (revision === previewRevision && previewToken === productPreviewToken) previewStatus.textContent = errMsg(error);
+    }
+  };
+  $('#materials').addEventListener('focusin', (event) => {
+    const row = event.target.closest('tr');
+    if (row && row !== selectedRow) previewRow(row);
   });
 
   $('#materials').onclick = async (event) => {

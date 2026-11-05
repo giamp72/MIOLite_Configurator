@@ -215,3 +215,9 @@ body.no-scroll { overflow: hidden; }
   .product-preview-panel.expanded .product-preview-stage { height: 45vh; }
 }
 .preview-measures h3 { margin: 0 0 .5rem; font-size: 1rem; }
+
+.materials-layout { display: grid; grid-template-columns: minmax(0, 6fr) minmax(280px, 4fr); gap: 1rem; align-items: start; }
+.material-preview-panel { position: sticky; top: 1rem; padding: 1rem; }
+.material-preview-panel h2 { margin: 0; font-size: 1rem; }
+#materials tr.selected { background: rgba(168, 85, 247, .08); }
+@media (max-width: 900px) { .materials-layout { grid-template-columns: 1fr; } .material-preview-panel { position: static; } }
