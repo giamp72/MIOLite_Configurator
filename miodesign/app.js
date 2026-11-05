@@ -1447,7 +1447,7 @@ async function viewTest(idParam) {
   activeProductPreview = null;
   const crumbs = [['Final Check']];
   shell('<div class="empty">Caricamento…</div>', crumbs);
-  const prodotti = await q(sb.from('prodotti').select('id_prodotto, nome, validato').order('nome'));
+  const prodotti = await q(sb.from('prodotti').select('id_prodotto, nome, descrizione, validato').order('nome'));
   const id = idParam ? Number(idParam) : null;
   const picker = `<section class="card picker">
       <div class="picker-head"><h2 style="margin:0">Prodotti</h2>
@@ -1456,9 +1456,9 @@ async function viewTest(idParam) {
       <div class="picker-actions" id="pk-actions"></div></section>`;
   const drawPicker = (filter = '') => {
     const f = filter.trim().toLowerCase();
-    const list = prodotti.filter((p) => !f || p.nome.toLowerCase().includes(f))
+    const list = prodotti.filter((p) => !f || `${p.nome} ${p.descrizione || ''}`.toLowerCase().includes(f))
       .sort((a, b) => Number(a.validato) - Number(b.validato) || a.nome.localeCompare(b.nome));
-    $('#pk-list').innerHTML = list.map((p) => `<a class="picker-item ${p.id_prodotto === id ? 'selected' : ''}" href="#/test/${p.id_prodotto}" role="option"><span>${esc(p.nome)}</span>
+    $('#pk-list').innerHTML = list.map((p) => `<a class="picker-item ${p.id_prodotto === id ? 'selected' : ''}" href="#/test/${p.id_prodotto}" role="option"><span>${esc(p.nome)}${p.descrizione ? ` : <span class="muted">${esc(p.descrizione)}</span>` : ''}</span>
       ${p.validato ? `<span class="badge ok">${icon('check')} Testato</span>` : '<span class="badge warn">Da validare</span>'}</a>`).join('') || '<div class="empty">Nessun prodotto.</div>';
     $('#pk-list .selected')?.scrollIntoView({ block: 'nearest' });
     const current = prodotti.find((p) => p.id_prodotto === id);
