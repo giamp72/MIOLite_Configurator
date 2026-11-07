@@ -1,8 +1,13 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from './config.js';
+import { codingCombinations, comboKey, findConfiguration, rulesToRows } from './conditions.mjs';
+import { createConditionEditor } from './condition-editor.mjs';
+import { updateConditionSelects } from './condition-selects.mjs';
+import { createProductConfigRepository } from './product-config.mjs';
 
 const configured = !SUPABASE_URL.includes('YOUR-PROJECT');
 const sb = configured ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+const { loadConditionRules, loadProductConfig, listiniWithDefault } = createProductConfigRepository(sb, q, qAll);
 const app = document.getElementById('app');
 let session = null;
 let activeProductPreview = null;
@@ -288,19 +293,20 @@ async function viewProdotto(idParam) {
   shell('<div class="empty">Caricamento…</div>', [['Prodotti', '#/prodotti'], [isNew ? 'Nuovo prodotto' : `Prodotto ${id}`]]);
 
   let prodotto = { nome: '', descrizione: '', attivo: true };
-  let misure = [], assegnati = [], configs = [], tuttiAttributi = [], opzioniPerAttr = [];
+  let misure = [], assegnati = [], configs = [], tuttiAttributi = [], opzioniPerAttr = [], conditions = [];
   let meshRows = [], meshMappingsById = {}, previewOptionsByAttr = {};
   const meshMappingKey = (meshId, role) => `${meshId}:${role}`;
   if (!isNew) {
-    const [p, m, pa, cf, attrs] = await Promise.all([
+    const [p, m, pa, cf, attrs, loadedConditions] = await Promise.all([
       q(sb.from('prodotti').select('*').eq('id_prodotto', id).maybeSingle()),
       q(sb.from('misure').select('*, risorse_glb(id_glb, nome_file, percorso_risorsa)').eq('id_prodotto', id).order('id_misura')),
       q(sb.from('prodotti_attributi').select('*, attributi(nome, descrizione, tipo_attributo)').eq('id_prodotto', id).order('ordine')),
       q(sb.from('configurazioni').select('id_attributo, id_opzione').eq('id_prodotto', id)),
       q(sb.from('attributi').select('id_attributo, nome, descrizione, tipo_attributo, attivo').order('nome')),
+      loadConditionRules(id),
     ]);
     if (!p) { toast('Prodotto non trovato', true); return go('#/prodotti'); }
-    prodotto = p; misure = m; assegnati = pa; configs = cf; tuttiAttributi = attrs;
+    prodotto = p; misure = m; assegnati = pa; configs = cf; tuttiAttributi = attrs; conditions = loadedConditions;
     const ids = assegnati.map((a) => a.id_attributo);
     if (ids.length) {
       const ao = await q(sb.from('attributi_opzioni').select('id_attributo, abilitata, opzioni(id_opzione, nome, descrizione, attiva, ordine, id_materiale, valore_visibilita, materiali(id_materiale, nome, id_glb, risorse_glb(percorso_risorsa)))').in('id_attributo', ids));
@@ -368,8 +374,8 @@ async function viewProdotto(idParam) {
       <select id="mapping-measure">${previewMeasures.map((measure) => `<option value="${measure.previewId}">${esc(measure.dim_x)} × ${esc(measure.dim_y)} × ${esc(measure.dim_z)} ${esc(measure.unita_misura)} · ${esc(measure.risorse_glb.nome_file)}</option>`).join('')}</select>
       <div id="mesh-map-rows">${previewMeasures.length ? meshMappingRows(rows) : '<p class="empty">Associa prima un GLB a una misura.</p>'}</div>`;
   };
-  const previewAttributesMarkup = (measureId) => {
-    const attributeIds = mappedAttributeIds(measureId);
+  const previewAttributesMarkup = (measureId, rules = []) => {
+    const attributeIds = rules.length ? assegnati.map((attribute) => attribute.id_attributo) : mappedAttributeIds(measureId);
     if (!attributeIds.length) return '<p class="muted">Nessun attributo mappato su questo GLB.</p>';
     return attributeIds.map((attributeId) => {
       const attribute = assegnati.find((item) => item.id_attributo === attributeId);
@@ -379,9 +385,10 @@ async function viewProdotto(idParam) {
         ? $$('[data-opt]:checked', block).map((option) => Number(option.dataset.opt))
         : configs.filter((config) => config.id_attributo === attributeId).map((config) => config.id_opzione));
       const options = (previewOptionsByAttr[attributeId] || []).filter((option) => allowedIds.has(option.id_opzione));
+      if (rules.length && !options.length) return '';
       return `<div class="field preview-attr-row"><label for="preview-attr-${attributeId}">${esc(attribute.attributi.nome)}${attribute.attributi.descrizione ? `: ${esc(attribute.attributi.descrizione)}` : ''}</label>
-        <select id="preview-attr-${attributeId}" data-preview-attribute="${attributeId}">
-          <option value="">— seleziona —</option>${options.map((option) => `<option value="${option.id_opzione}" ${String(option.id_opzione) === String(attribute.id_opzione_default || '') ? 'selected' : ''}>${esc(optionLabel(option))}</option>`).join('')}
+        <select id="preview-attr-${attributeId}" data-preview-attribute="${attributeId}" data-condition-attribute="${attributeId}">
+          ${rules.length ? '' : '<option value="">— seleziona —</option>'}${options.map((option) => `<option value="${option.id_opzione}" ${String(option.id_opzione) === String(attribute.id_opzione_default || '') ? 'selected' : ''}>${esc(optionLabel(option))}</option>`).join('')}
         </select></div>`;
     }).join('');
   };
@@ -427,6 +434,10 @@ async function viewProdotto(idParam) {
         <option value="">— seleziona —</option>${assegnabili.map((a) => `<option value="${a.id_attributo}">${esc(attributeLabel(a))} (${esc(a.tipo_attributo)})</option>`).join('')}</select></div>
         <div class="shrink"><button class="btn" type="button" id="new-attr-link">${btn('plus', 'Definisci nuovo attributo')}</button></div>
         </div><p class="muted">Puoi aggiungerne quanti vuoi: tutto viene salvato con il pulsante in basso.</p></section>
+    <section class="card"><h2>Condizioni tra attributi</h2>
+      <p class="muted">Se un attributo ha il valore indicato, l'altro può assumere solo i valori selezionati. Senza una condizione sono ammesse tutte le opzioni del prodotto. Le condizioni contemporanee si applicano insieme.</p>
+      <div id="condition-rules"></div>
+      <button class="add-row" type="button" id="add-condition">${btn('plus', 'Aggiungi condizione')}</button></section>
     <section class="card"><h2>Mappatura mesh</h2>
       <p class="muted">Per ogni mesh puoi assegnare separatamente un attributo materiale e un attributo di visibilità. Ogni GLB ha la propria mappatura.</p>
       <p class="muted">Mesh selezionata: <code id="mapping-highlighted">nessuna</code></p>
@@ -449,6 +460,25 @@ async function viewProdotto(idParam) {
   if (!isNew) refreshProductSummary();
   const originalMappings = { ...meshMappingsById };
   let createdId = null;
+  const conditionAttributes = () => assegnati.map((pa) => {
+    const block = $(`.attr-block[data-attr="${pa.id_attributo}"]`);
+    const selected = new Set(block ? $$('[data-opt]:checked', block).map((input) => Number(input.dataset.opt)) : []);
+    return {
+      id: pa.id_attributo, nome: pa.attributi.nome, descrizione: pa.attributi.descrizione,
+      defaultId: block ? num($('[data-f=default]', block).value) : null,
+      options: (opzioniPerAttr[pa.id_attributo] || []).filter((option) => selected.has(option.id_opzione)),
+    };
+  });
+  let redrawPreviewAttributes = () => {};
+  let applyCurrentPreview = () => {};
+  const conditionEditor = isNew ? null : createConditionEditor($('#condition-rules'), conditions, conditionAttributes, esc, () => {
+    redrawPreviewAttributes();
+    applyCurrentPreview();
+  });
+  if (conditionEditor) {
+    conditionEditor.refresh();
+    $('#add-condition').onclick = () => conditionEditor.add();
+  }
 
   const saveProduct = async () => {
     const rec = { nome: $('#nome').value.trim(), descrizione: $('#descrizione').value.trim() || null, attivo: $('#attivo').checked };
@@ -457,6 +487,9 @@ async function viewProdotto(idParam) {
       createdId = (await q(sb.from('prodotti').insert(rec).select('id_prodotto').single())).id_prodotto;
       return;
     }
+    const rules = conditionEditor.getRules();
+    const conditionedAttributes = conditionAttributes().filter((attribute) => attribute.options.length);
+    if (!findConfiguration(conditionedAttributes, rules)) throw new Error('Le condizioni non permettono alcuna configurazione del prodotto.');
 
     const measureOps = $$('#misure tr').flatMap((tr) => {
       const mid = tr.dataset.misura;
@@ -479,22 +512,15 @@ async function viewProdotto(idParam) {
     await q(sb.from('prodotti').update(rec).eq('id_prodotto', id));
     for (const op of measureOps) await op();
 
-    for (const block of $$('.attr-block')) {
-      const aid = Number(block.dataset.attr);
-      const wanted = $$('[data-opt]:checked', block).map((c) => Number(c.dataset.opt));
-      const isPending = block.dataset.new === '1';
-      const had = isPending ? [] : configs.filter((c) => c.id_attributo === aid).map((c) => c.id_opzione);
-      if (isPending) {
-        await q(sb.from('prodotti_attributi').upsert({ id_prodotto: id, id_attributo: aid, ordine: num($('[data-f=ordine]', block).value) ?? 0, obbligatorio: $('[data-f=obbligatorio]', block).checked, codifica: $('[data-f=codifica]', block).checked }, { onConflict: 'id_prodotto,id_attributo' }));
-      }
-      const toDel = had.filter((o) => !wanted.includes(o));
-      const toAdd = wanted.filter((o) => !had.includes(o));
-      if (toDel.length) await q(sb.from('configurazioni').delete().eq('id_prodotto', id).eq('id_attributo', aid).in('id_opzione', toDel));
-      if (toAdd.length) await q(sb.from('configurazioni').insert(toAdd.map((o) => ({ id_prodotto: id, id_attributo: aid, id_opzione: o }))));
-      await q(sb.from('prodotti_attributi').update({
-        id_opzione_default: num($('[data-f=default]', block).value), ordine: num($('[data-f=ordine]', block).value) ?? 0, obbligatorio: $('[data-f=obbligatorio]', block).checked, codifica: $('[data-f=codifica]', block).checked,
-      }).eq('id_prodotto', id).eq('id_attributo', aid));
-    }
+    const attributeRows = $$('.attr-block').map((block) => ({
+      id_attributo: Number(block.dataset.attr),
+      opzioni: $$('[data-opt]:checked', block).map((input) => Number(input.dataset.opt)),
+      id_opzione_default: num($('[data-f=default]', block).value),
+      ordine: num($('[data-f=ordine]', block).value) ?? 0,
+      obbligatorio: $('[data-f=obbligatorio]', block).checked,
+      codifica: $('[data-f=codifica]', block).checked,
+    }));
+    await q(sb.rpc('salva_attributi_condizioni', { prodotto_id: id, attributi: attributeRows, righe: rulesToRows(rules) }));
 
     if (mappingChanges.length) {
       for (const key of mappingChanges) {
@@ -656,8 +682,6 @@ async function viewProdotto(idParam) {
   };
   bindMeshMapping();
 
-  let redrawPreviewAttributes = () => {};
-  let applyCurrentPreview = () => {};
   const attrSelect = $('#nuovo-attr');
   const bindAttrBlock = (block) => {
     const aid = Number(block.dataset.attr);
@@ -671,6 +695,7 @@ async function viewProdotto(idParam) {
         def.value = checked.includes(current) ? current : '';
       }
       refreshProductSummary();
+      conditionEditor.refresh();
       redrawPreviewAttributes();
       applyCurrentPreview();
     });
@@ -685,6 +710,7 @@ async function viewProdotto(idParam) {
       Object.keys(meshMappingsById).filter((key) => meshMappingsById[key] === aid).forEach((key) => { delete meshMappingsById[key]; delete originalMappings[key]; });
       attrSelect.add(new Option(`${removed.attributi.nome} (${removed.attributi.tipo_attributo})`, aid));
       block.remove();
+      conditionEditor.refresh();
       $('#no-attr').hidden = assegnati.length > 0;
       redrawMapping();
       refreshProductSummary();
@@ -703,11 +729,13 @@ async function viewProdotto(idParam) {
       const ao = await q(sb.from('attributi_opzioni').select('id_attributo, abilitata, opzioni(id_opzione, nome, descrizione, attiva, ordine, id_materiale, valore_visibilita, materiali(id_materiale, nome, id_glb, risorse_glb(percorso_risorsa)))').eq('id_attributo', aid));
       opzioniPerAttr[aid] = ao.filter((r) => r.abilitata && r.opzioni).map((r) => r.opzioni)
         .sort((a, b) => a.ordine - b.ordine || a.nome.localeCompare(b.nome));
+      previewOptionsByAttr[aid] = opzioniPerAttr[aid];
       const orders = $$('#attr-blocks [data-f=ordine]').map((input) => Number(input.value) || 0);
       const pa = { id_attributo: aid, attributi: { nome: attribute.nome, descrizione: attribute.descrizione, tipo_attributo: attribute.tipo_attributo }, id_opzione_default: null, ordine: orders.length ? Math.max(...orders) + 1 : 0, obbligatorio: true, codifica: true, pending: true };
       assegnati.push(pa);
       $('#attr-blocks').insertAdjacentHTML('beforeend', attrBlock(pa));
       bindAttrBlock($('#attr-blocks').lastElementChild);
+      conditionEditor.refresh();
       attrSelect.querySelector(`option[value="${aid}"]`).remove();
       $('#no-attr').hidden = true;
       redrawMapping();
@@ -741,13 +769,21 @@ async function viewProdotto(idParam) {
       }
     };
     const optionFor = (attributeId) => {
-      const optionId = $(`[data-preview-attribute="${attributeId}"]`).value;
+      const optionId = $(`[data-preview-attribute="${attributeId}"]`)?.value;
       return (previewOptionsByAttr[attributeId] || []).find((option) => String(option.id_opzione) === optionId);
     };
+    let previewSelection = null;
+    let previewRules = [];
+    let previewRulesError = '';
     let applyRevision = 0;
     const applyPreview = async () => {
       if (!previewViewer || previewToken !== productPreviewToken) return;
       const revision = ++applyRevision;
+      if (previewRulesError) {
+        status.textContent = previewRulesError;
+        status.classList.add('error-text');
+        return;
+      }
       const messages = [];
       const entriesByPath = new Map();
       const measureId = measureSelect.value;
@@ -781,12 +817,30 @@ async function viewProdotto(idParam) {
       const selectedOptions = new Map($$('[data-preview-attribute]', $('#preview-attributes'))
         .map((select) => [select.dataset.previewAttribute, select.value]));
       const selectedMeasure = previewMeasures.find((measure) => String(measure.previewId) === measureSelect.value);
+      previewRulesError = '';
+      try {
+        previewRules = conditionEditor.getRules();
+      } catch (error) {
+        previewRules = [];
+        previewRulesError = `Completa le condizioni per aggiornare l'anteprima: ${errMsg(error)}`;
+      }
       $('#preview-attributes').innerHTML = selectedMeasure
-        ? previewAttributesMarkup(selectedMeasure.previewId)
+        ? previewAttributesMarkup(selectedMeasure.previewId, previewRules)
         : '<p class="muted">Gli attributi mappati compariranno qui.</p>';
       $$('[data-preview-attribute]', $('#preview-attributes')).forEach((select) => {
         if (selectedOptions.has(select.dataset.previewAttribute)) select.value = selectedOptions.get(select.dataset.previewAttribute);
       });
+      if (selectedMeasure && previewRules.length) {
+        const attrs = conditionAttributes().filter((attribute) => attribute.options.length);
+        previewSelection = updateConditionSelects($('#preview-attributes'), '[data-preview-attribute]', attrs, previewRules, previewSelection);
+        if (!previewSelection) previewRulesError = 'Le condizioni non permettono alcuna configurazione.';
+      } else {
+        previewSelection = null;
+      }
+      if (previewRulesError) {
+        status.textContent = previewRulesError;
+        status.classList.add('error-text');
+      }
       bindPreviewAttributes();
     };
     refreshPreviewMeasures = (preferredId = null) => {
@@ -857,6 +911,16 @@ async function viewProdotto(idParam) {
     const bindPreviewAttributes = () => {
       $$('[data-preview-attribute]', $('#preview-attributes')).forEach((select) => {
         select.onchange = () => {
+          if (previewRules.length) {
+            const attrs = conditionAttributes().filter((attribute) => attribute.options.length);
+            previewSelection = updateConditionSelects($('#preview-attributes'), '[data-preview-attribute]', attrs, previewRules,
+              previewSelection, Number(select.dataset.previewAttribute), Number(select.value));
+            if (!previewSelection) {
+              status.textContent = 'Nessuna configurazione compatibile con la selezione.';
+              status.classList.add('error-text');
+              return;
+            }
+          }
           applyPreview().catch((error) => {
             status.textContent = `Impossibile aggiornare l’anteprima: ${errMsg(error)}`;
             status.classList.add('error-text');
@@ -1255,46 +1319,11 @@ async function qAll(make) {
 }
 
 const measureLabel = (m) => `${m.dim_x} × ${m.dim_y} × ${m.dim_z} ${m.unita_misura}`;
-const comboKey = (pairs) => [...pairs].sort((a, b) => a[0] - b[0]).map(([a, o]) => `${a}:${o}`).join('|');
-const cartesian = (attrs) => attrs.reduce((acc, a) => acc.flatMap((c) => a.options.map((o) => [...c, [a.id, o]])), [[]]);
 const MAX_COMBINATIONS = 5000;
-
-// Prodotto con misure e attributi configurabili (solo quelli con almeno un'opzione ammessa).
-async function loadProductConfig(id) {
-  const [prodotto, misure, assegnati, configs] = await Promise.all([
-    q(sb.from('prodotti').select('*').eq('id_prodotto', id).maybeSingle()),
-    q(sb.from('misure').select('*, risorse_glb(id_glb, nome_file, percorso_risorsa)').eq('id_prodotto', id).order('dim_x').order('dim_y').order('dim_z')),
-    q(sb.from('prodotti_attributi').select('*, attributi(nome, descrizione, tipo_attributo)').eq('id_prodotto', id).order('ordine')),
-    q(sb.from('configurazioni').select('id_attributo, id_opzione').eq('id_prodotto', id)),
-  ]);
-  if (!prodotto) return null;
-  const attrIds = assegnati.map((a) => a.id_attributo);
-  const optionsById = {};
-  if (attrIds.length) {
-    const ao = await q(sb.from('attributi_opzioni').select('id_attributo, abilitata, opzioni(id_opzione, nome, descrizione, attiva, ordine, id_materiale, valore_visibilita, materiali(id_materiale, nome, id_glb, risorse_glb(percorso_risorsa)))').in('id_attributo', attrIds));
-    ao.filter((r) => r.abilitata && r.opzioni).forEach((r) => (optionsById[r.id_attributo] ||= []).push(r.opzioni));
-  }
-  const attributes = assegnati.map((pa) => {
-    const allowed = new Set(configs.filter((c) => c.id_attributo === pa.id_attributo).map((c) => c.id_opzione));
-    const options = (optionsById[pa.id_attributo] || []).filter((o) => allowed.has(o.id_opzione))
-      .sort((a, b) => a.ordine - b.ordine || a.nome.localeCompare(b.nome));
-    return { id: pa.id_attributo, nome: pa.attributi.nome, descrizione: pa.attributi.descrizione, tipo: pa.attributi.tipo_attributo, codifica: pa.codifica !== false, defaultId: pa.id_opzione_default, options };
-  }).filter((a) => a.options.length);
-  return { prodotto, misure, attributes };
-}
 
 function productSelect(prodotti, selectedId, base) {
   return `<div class="field"><label for="sel-prodotto">Prodotto</label><select id="sel-prodotto">
     <option value="">— seleziona un prodotto —</option>${prodotti.map((p) => `<option value="${p.id_prodotto}" ${p.id_prodotto === selectedId ? 'selected' : ''}>${esc(p.nome)}</option>`).join('')}</select></div>`;
-}
-
-async function listiniWithDefault() {
-  let listini = await q(sb.from('listini').select('*').eq('attivo', true).order('nome'));
-  if (!listini.length) {
-    await q(sb.from('listini').insert({ nome: 'Listino base', valuta: 'EUR' }));
-    listini = await q(sb.from('listini').select('*').eq('attivo', true).order('nome'));
-  }
-  return listini;
 }
 
 // ---------- commerciale: codici, descrizioni e prezzi ----------
@@ -1320,16 +1349,16 @@ async function viewCodifica(idParam) {
     qAll(() => sb.from('prezzi').select('id_listino, id_codice, prezzo, codifica!inner(id_prodotto)').eq('codifica.id_prodotto', id).order('id_codice')),
   ]);
   if (!cfg) { toast('Prodotto non trovato', true); return go('#/codifica'); }
-  const { misure, attributes } = cfg;
+  const { misure, attributes, rules } = cfg;
 
   const codingAttributes = attributes.filter((attribute) => attribute.codifica);
-  const total = misure.length * codingAttributes.reduce((n, a) => n * a.options.length, 1);
-  if (total > MAX_COMBINATIONS) {
-    shell(`${head()}<p class="empty">Il prodotto ha ${total} combinazioni (massimo gestito: ${MAX_COMBINATIONS}). Riduci le opzioni ammesse nella scheda prodotto.</p>`, crumbs);
-    return bindSelect();
-  }
   if (!misure.length) {
     shell(`${head()}<p class="empty">Il prodotto non ha misure: aggiungile nella scheda prodotto.</p>`, crumbs);
+    return bindSelect();
+  }
+  const combinations = codingCombinations(attributes, rules, Math.floor(MAX_COMBINATIONS / misure.length));
+  if (combinations.length * misure.length > MAX_COMBINATIONS) {
+    shell(`${head()}<p class="empty">Il prodotto supera ${MAX_COMBINATIONS} combinazioni ammesse. Riduci le opzioni nella scheda prodotto.</p>`, crumbs);
     return bindSelect();
   }
 
@@ -1340,7 +1369,7 @@ async function viewCodifica(idParam) {
 
   const rows = [];
   for (const misura of misure) {
-    for (const pairs of cartesian(codingAttributes.map((a) => ({ id: a.id, options: a.options.map((o) => o.id_opzione) })))) {
+    for (const pairs of combinations) {
       const key = comboKey(pairs);
       const found = byKey.get(`${misura.id_misura}|${key}`);
       const prices = {};
@@ -1484,7 +1513,7 @@ async function viewTest(idParam) {
 
   const [cfg, listini] = await Promise.all([loadProductConfig(id), listiniWithDefault()]);
   if (!cfg) { toast('Prodotto non trovato', true); return go('#/test'); }
-  const { misure, attributes } = cfg;
+  const { misure, attributes, rules } = cfg;
   const optionById = new Map(attributes.flatMap((a) => a.options.map((o) => [o.id_opzione, o])));
 
   shell(`${head}
@@ -1497,7 +1526,7 @@ async function viewTest(idParam) {
       <aside>
         <section class="card"><h2>Configurazione</h2>
           ${attributes.map((a) => `<div class="field"><label for="t-attr-${a.id}">${esc(a.nome)}${a.descrizione ? ` : ${esc(a.descrizione)}` : ''}</label>
-            <select id="t-attr-${a.id}" data-t-attr="${a.id}">
+            <select id="t-attr-${a.id}" data-t-attr="${a.id}" data-condition-attribute="${a.id}">
             ${a.options.map((o) => `<option value="${o.id_opzione}" ${(a.defaultId ?? a.options[0].id_opzione) === o.id_opzione ? 'selected' : ''}>${esc(o.nome)}${o.descrizione ? ` : ${esc(o.descrizione)}` : ''}</option>`).join('')}</select></div>`).join('') || '<p class="muted">Nessun attributo configurabile.</p>'}
         </section>
         <section class="card result-card"><h2>Risultato</h2><div id="t-result" class="muted">…</div></section>
@@ -1507,6 +1536,13 @@ async function viewTest(idParam) {
 
   const measureSelect = $('#t-misura');
   const status = $('#t-status');
+  let selectedConfiguration = updateConditionSelects(app, '[data-t-attr]', attributes, rules);
+  if (!selectedConfiguration) {
+    $('#t-result').textContent = 'Le condizioni non permettono alcuna configurazione. Correggile nella scheda prodotto.';
+    status.textContent = 'Anteprima non disponibile per questa configurazione.';
+    $$('[data-t-attr]').forEach((select) => { select.disabled = true; });
+    return;
+  }
   const currentMeasure = () => misure.find((m) => String(m.id_misura) === measureSelect.value);
   const selection = () => attributes.map((a) => [a.id, Number($(`[data-t-attr="${a.id}"]`).value)]);
   const codeSelection = () => attributes.filter((a) => a.codifica)
@@ -1617,7 +1653,16 @@ async function viewTest(idParam) {
     await applyPreview();
   };
 
-  const onConfigChange = () => { updateResult(); guarded(applyPreview)(); };
+  const onConfigChange = (event) => {
+    const id = Number(event.target.dataset.tAttr);
+    selectedConfiguration = updateConditionSelects(app, '[data-t-attr]', attributes, rules, selectedConfiguration, id, Number(event.target.value));
+    if (!selectedConfiguration) {
+      status.textContent = 'Nessuna configurazione compatibile con la selezione.';
+      return;
+    }
+    updateResult();
+    guarded(applyPreview)();
+  };
   $$('[data-t-attr]').forEach((s) => { s.onchange = onConfigChange; });
   $('#t-listino').onchange = updateResult;
   measureSelect.onchange = () => { updateResult(); guarded(loadMeasure)(); };

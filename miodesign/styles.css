@@ -101,6 +101,8 @@ td.actions { white-space: nowrap; text-align: right; }
 .opt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: .4rem .75rem; margin-bottom: .75rem; }
 .attr-block { border: 1px solid var(--line); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; background: var(--hover); }
 .attr-block h3 { margin: 0 0 .5rem; font-size: 1rem; }
+.condition-rule { border: 1px solid var(--line); border-radius: 12px; padding: 1rem; margin-bottom: 1rem; background: var(--hover); }
+.condition-rule .row { margin-bottom: .8rem; }
 .empty { padding: 1.5rem; text-align: center; color: var(--muted); }
 .search { max-width: none; }
 .search-wrap { position: relative; }
